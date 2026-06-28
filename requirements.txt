@@ -1,0 +1,7 @@
+nest_asyncio
+mplfinance
+matplotlib
+pandas
+numpy
+python-telegram-bot
+ccxt
