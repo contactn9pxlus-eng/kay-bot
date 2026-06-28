@@ -1,3 +1,6 @@
+import matplotlib
+matplotlib.use('Agg') # WICHTIG: Damit der Server Bilder ohne Monitor rendert
+
 import logging
 import nest_asyncio
 import os
@@ -23,7 +26,7 @@ def has_access(user_id):
     return user_id in ALLOWED_USERS or user_id == ADMIN_ID or ADMIN_ID == 0
 
 # ---------------------------------------------------------------------------
-# CHART ENGINE (Deine Original-Logik)
+# CHART ENGINE
 # ---------------------------------------------------------------------------
 def draw_pure_matplotlib_chart(coin_name):
     np.random.seed(1337)
@@ -54,6 +57,8 @@ def draw_pure_matplotlib_chart(coin_name):
         ax.fill_between([i-0.3, i+0.3], open_p, close_p, color=color, edgecolor=color)
 
     ax.text(0.01, 1.05, f"{coin_name.upper()}/USDT - 1H", transform=ax.transAxes, color='white', fontsize=14, fontweight='bold', ha='left')
+    ax.text(df['High'].idxmax(), df['High'].max() + 0.002, "0.10", color='#ff0000', fontsize=11, fontweight='bold', ha='center', va='bottom')
+    ax.text(df['Low'].idxmin(), df['Low'].min() - 0.002, "0.07", color='#00ff22', fontsize=11, fontweight='bold', ha='center', va='top')
     ax.set_xticks([]) 
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f"{x:.4f}"))
     out = f"chart_{coin_name}.png"
@@ -64,40 +69,86 @@ def draw_pure_matplotlib_chart(coin_name):
 def fetch_live_chart_built_in(coin_name):
     symbol = f"{coin_name.upper()}USDT"
     url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1h&limit=80"
+    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+    with urllib.request.urlopen(req, timeout=10) as response:
+        data = json.loads(response.read().decode())
+    extracted = [[pd.to_datetime(c[0], unit='ms'), float(c[1]), float(c[2]), float(c[3]), float(c[4])] for c in data]
+    df = pd.DataFrame(extracted, columns=['timestamp', 'Open', 'High', 'Low', 'Close']).set_index('timestamp')
+    colors = mpf.make_marketcolors(up='white', down='#0026ff', edge='inherit', wick='inherit')
+    custom_style = mpf.make_mpf_style(marketcolors=colors, facecolor='black', figcolor='black', gridcolor='#1c1c1c', gridstyle='-', rc={'text.color': 'white', 'axes.labelcolor': 'gray', 'xtick.color': 'white', 'ytick.color': 'white'})
+    
+    fig, ax = mpf.plot(df, type='candle', style=custom_style, returnfig=True, figsize=(11, 5.5), datetime_format='%b %d, %H:%M')
+    ax[0].set_ylabel('') 
+    ax[0].set_title(f"{coin_name.upper()}/USDT - 1H", loc='left', color='white', fontsize=14, fontweight='bold', pad=10)
+    ax[0].yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f"{x:.4f}"))
+    out = f"chart_{coin_name}.png"
+    plt.savefig(out, bbox_inches='tight', facecolor='black', dpi=100)
+    plt.close()
+    return out
+
+# ---------------------------------------------------------------------------
+# MENUS & BUTTONS
+# ---------------------------------------------------------------------------
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global ADMIN_ID
+    user_id = update.effective_user.id
+    if ADMIN_ID == 0:
+        ADMIN_ID = user_id
+        ALLOWED_USERS.add(user_id)
+    if not has_access(user_id):
+        await update.message.reply_text("⛔ *Access Denied.*", parse_mode="Markdown")
+        return
+    keyboard = [[InlineKeyboardButton("📊 Chat CMDs", callback_data='chat_cmds')], [InlineKeyboardButton("⚙️ Other CMDs (Access)", callback_data='other_cmds')]]
+    await update.message.reply_text("👋 *Welcome to the Control Center.*", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+async def button_tap_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+    if not has_access(user_id): return
+    if query.data == 'chat_cmds':
+        text = "📋 *Available Chart Commands:*\n\n`/long Token entry ...`\n`/short Token entry ...`"
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='back_to_main')]]), parse_mode="Markdown")
+    elif query.data == 'other_cmds':
+        text = f"⚙️ *Admin Settings*\n\n`/grant ID`\n`/revoke ID`\nID: `{user_id}`"
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='back_to_main')]]), parse_mode="Markdown")
+    elif query.data == 'back_to_main':
+        keyboard = [[InlineKeyboardButton("📊 Chat CMDs", callback_data='chat_cmds')], [InlineKeyboardButton("⚙️ Other CMDs (Access)", callback_data='other_cmds')]]
+        await query.edit_message_text("👋 *Welcome to the Control Center.*", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+# ---------------------------------------------------------------------------
+# SIGNAL LOGIC
+# ---------------------------------------------------------------------------
+async def handle_signal(update: Update, context: ContextTypes.DEFAULT_TYPE, is_long: bool):
+    if not has_access(update.effective_user.id): return
     try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=10) as response:
-            data = json.loads(response.read().decode())
-        extracted = [[pd.to_datetime(c[0], unit='ms'), float(c[1]), float(c[2]), float(c[3]), float(c[4])] for c in data]
-        df = pd.DataFrame(extracted, columns=['timestamp', 'Open', 'High', 'Low', 'Close']).set_index('timestamp')
-        colors = mpf.make_marketcolors(up='white', down='#0026ff', edge='inherit', wick='inherit')
-        custom_style = mpf.make_mpf_style(marketcolors=colors, facecolor='black', figcolor='black', gridcolor='#1c1c1c', gridstyle='-', rc={'text.color': 'white', 'axes.labelcolor': 'gray', 'xtick.color': 'white', 'ytick.color': 'white'})
+        coin = context.args[0].upper()
+        entry = context.args[2]
+        status = await update.message.reply_text(f"🔄 Generating chart for {coin}...")
         
-        fig, ax = mpf.plot(df, type='candle', style=custom_style, returnfig=True, figsize=(11, 5.5), datetime_format='%b %d, %H:%M')
-        ax[0].set_ylabel('') 
-        ax[0].set_title(f"{coin_name.upper()}/USDT - 1H", loc='left', color='white', fontsize=14, fontweight='bold', pad=10)
-        ax[0].yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f"{x:.4f}"))
-        out = f"chart_{coin_name}.png"
-        plt.savefig(out, bbox_inches='tight', facecolor='black', dpi=100)
-        plt.close()
-        return out
+        # Versucht echten Chart, wenn das fehlschlägt, den Fehler melden
+        path = fetch_live_chart_built_in(coin)
+        with open(path, 'rb') as p:
+            await update.message.reply_photo(photo=p, caption=f"*📈 SIGNAL - {coin}*", parse_mode="Markdown")
+        os.remove(path)
+        await status.delete()
     except Exception as e:
-        logging.error(f"Binance API Fehler: {e}")
-        return draw_pure_matplotlib_chart(coin_name)
+        await update.message.reply_text(f"❌ Error: {e}")
 
-# ... (Hier fügst du alle deine restlichen Funktionen: start_command, handle_signal, grant_command etc. ein, wie sie in deinem Code stehen)
+async def short_command(update, context): await handle_signal(update, context, False)
+async def long_command(update, context): await handle_signal(update, context, True)
 
+# ---------------------------------------------------------------------------
+# MAIN
+# ---------------------------------------------------------------------------
 def main():
-    # WICHTIG: Nutze deine Token-Variable am besten über Railway Settings (Environment Variables)
-    TOKEN = "8975995836:AAEhxOhCGXPG4mDWtLtN_7eFx7RrcTMcNJ8"
-    app = Application.builder().token(TOKEN).build()
+    app = Application.builder().token("8975995836:AAEhxOhCGXPG4mDWtLtN_7eFx7RrcTMcNJ8").build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("short", short_command))
     app.add_handler(CommandHandler("long", long_command))
     app.add_handler(CommandHandler("grant", grant_command))
     app.add_handler(CommandHandler("revoke", revoke_command))
     app.add_handler(CallbackQueryHandler(button_tap_handler))
-    print("Live Chart Engine Active on Railway!")
     app.run_polling()
 
 if __name__ == '__main__':
