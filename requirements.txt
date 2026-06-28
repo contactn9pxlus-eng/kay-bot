@@ -1,7 +1,8 @@
-nest_asyncio
-mplfinance
-matplotlib
-pandas
-numpy
-python-telegram-bot
-ccxt
+import sys
+import subprocess
+import nest_asyncio
+nest_asyncio.apply()
+
+# Installiert alle Tools inklusive der neuen Live-Börsen-Schnittstelle (ccxt)
+subprocess.check_call([sys.executable, "-m", "pip", "install", "mplfinance", "matplotlib", "pandas", "numpy", "python-telegram-bot", "ccxt"])
+print("✅ REQUIRED LIVE-DATA PACKAGES INSTALLED SUCCESSFULLY!")
